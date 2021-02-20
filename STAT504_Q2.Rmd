@@ -1,0 +1,132 @@
+---
+title: "STAT504_Q2"
+author: "Houjie Wang & Shuang Wu"
+date: "2/19/2021"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+library(nnet)
+library(Rfast)
+```
+
+# Problem Recap
+
+Are more physical activities related to a healthier life? 
+
+# Related Variables Recap 
+
+## Variables 
+
+HEALTH: If -9, not ascertained; if -8, I don’t know; if -7, prefer not to answer; if 1, excellent; if 2, very good; if 3, good; if 4, fair; if 5, poor
+
+## Predictor 
+
+\begin{itemize}
+  \item[LPACT] Count of times of light or moderate physical activity in past week
+  \item[VPACT] Count of times of vigorous physical activity in past week
+  \item[PHYACT] If -9, not ascertained; if -8, I don’t know; if -7, prefer not to answer; if 1, rarely or never conduct any physical activities; if 2, some light or moderate physical activities; 3. Some vigorous physical activities
+\end{itemize} 
+
+# Data Cleaning 
+
+To simplify, observations only with positive values in HEALTH and PHYCT are taken. 
+```{r, message=FALSE}
+data <- read.csv("DataforUse.csv")
+# data_full <- read.csv("perpub.csv")
+valid_health_ind <- data$HEALTH %in% 1: 5 + data$PHYACT %in% 1: 3 + 
+  as.vector(data$LPACT >= -1) + as.vector(data$VPACT >= -1) == 4
+data_health <- cbind.data.frame(HEALTH = data$HEALTH[valid_health_ind], 
+                                LPACT = as.integer(data$LPACT[valid_health_ind]), 
+                                VPACT = as.integer(data$VPACT[valid_health_ind]), 
+                                PHYACT = as.factor(data$PHYACT[valid_health_ind]))
+nrow(data_health)
+
+# Verify if LPACT=VPACT=-1, when PHYACT=1 (TRUE)
+sum(rowsums(as.matrix(data_health[data_health$PHYACT == 1, 2: 3])) != -2) == 0
+
+# Verify if VPACT=-1, when PHYACT=2 (TRUE)
+sum(data_health[data_health$PHYACT == 2, 3] != -1) == 0
+
+# Verify if LPACT=-1, when PHYACT=3 (TRUE)
+sum(data_health[data_health$PHYACT == 3, 2] != -1) == 0
+
+# Set all "-1" in LPACT and VPACT to "0" since they both represent no LPACT or VPACT last week
+data_health$LPACT[data_health$LPACT == -1] = 0
+data_health$VPACT[data_health$VPACT == -1] = 0
+```  
+
+# Model Proposal 
+$$
+\begin{aligned}
+  HEALTH = \beta_0+\beta_1 LPACT + \beta_2VPACT
+\end{aligned}
+$$
+
+Here is our multinomial logistic regression model. $Y$ represents HEALTH and $X$ represents the design matrix.
+$$
+\begin{aligned}
+  P(Y_i=1)&=1-\sum_{k=2}^5 P(Y_i=k)=\frac{1}{1+\sum_{k=2}^5 \exp\{\boldsymbol{\beta}_k'\boldsymbol{X}_{i}\}}\\
+  P(Y_i=2)&=P(Y_i=1)\exp\{\boldsymbol{\beta}_2'\boldsymbol{X}_{i}\}=\frac{\exp\{\boldsymbol{\beta}_2'\boldsymbol{X}_{i}\}}{1+\sum_{k=2}^5 \exp\{\boldsymbol{\beta}_k'\boldsymbol{X}_{i}\}} \\
+  P(Y_i=3)&=P(Y_i=1)\exp\{\boldsymbol{\beta}_3'\boldsymbol{X}_{i}\}=\frac{\exp\{\boldsymbol{\beta}_3'\boldsymbol{X}_{i}\}}{1+\sum_{k=2}^5 \exp\{\boldsymbol{\beta}_k'\boldsymbol{X}_{i}\}} \\
+  \vdots\\
+  P(Y_i=5)&=P(Y_i=1)\exp\{\boldsymbol{\beta}_5'\boldsymbol{X}_{i}\}=\frac{\exp\{\boldsymbol{\beta}_5'\boldsymbol{X}_{i}\}}{1+\sum_{k=2}^5 \exp\{\boldsymbol{\beta}_k'\boldsymbol{X}_{i}\}}.
+\end{aligned}
+$$  
+
+So we obtiant he optimization problem:
+$$
+\begin{aligned}
+  \min_{\boldsymbol{\beta_2},\ldots,\boldsymbol{\beta_5}} \sum_{i=1}^n\sum_{k=1}^5\log P(Y_i=k)\boldsymbol{1}_{\{Y_i=k\}}.
+\end{aligned}
+$$
+
+Now we fit such a model:
+```{r}
+fit <- multinom(HEALTH ~ LPACT + VPACT, data = data_health)
+(results <- summary(fit))
+``` 
+
+After the model fit, we would like to evaluate the significance of coefficients. Here we use Wald test.  
+```{r}
+(1 - pnorm(abs(results$coefficients/results$standard.errors), 0, 1)) * 2
+``` 
+
+All p-values are extremely small and we conclude that the model is significant. Instead of evaluating coefficient significance, we are also interested in testing the robustness of the model as a whole. Here we use likelihood ratio test by comparing the proposed model to an empty model: 
+
+```{r}
+fit2 <- multinom(HEALTH ~ 1, data = data_health)
+chi_stat <- -fit$deviance - (-fit2$deviance)
+1 - pchisq(chi_stat, df = 2)
+``` 
+
+As we can see that the p-value is also small. The proposed model is strong.
+
+<!-- fit2 <- multinom(HEALTH ~ LPACT + VPACT + LPACT*PHYACT + VPACT*PHYACT, data = data_health) -->
+<!-- results2 <- summary(fit2) -->
+<!-- (1 - pnorm(abs(results2$coefficients/results2$standard.errors), 0, 1)) * 2 -->
+<!-- ```  -->
+
+<!-- # Variable Selection  -->
+
+<!-- ```{r} -->
+<!-- library(parallel) -->
+<!-- ff <- HEALTH ~ LPACT + VPACT + PHYACT + PHYACT*LPACT + PHYACT*VPACT -->
+<!-- sub_ind <- sample(1: nrow(data_health), size = nrow(data_health), replace = FALSE) -->
+<!-- data_health_sub <- data_health[sub_ind, ] -->
+<!-- X <- model.matrix(ff, data_health_sub) -->
+<!-- Y <- data_health_sub$HEALTH -->
+<!-- fit_lasso_no <- glmnet(X, Y, family = "multinomial", alpha = 1, nlambda = 1, lambda = c(0), type.multinomial = "grouped") -->
+<!-- coef(fit_lasso_no) -->
+
+<!-- makeCluster(detectCores()) -->
+<!-- start <- Sys.time() -->
+<!-- fit_lasso <- glmnet::cv.glmnet(X, Y, family = "multinomial") -->
+<!-- end <- Sys.time() -->
+<!-- end - start -->
+<!-- ```  -->
+
+
+
+
+
